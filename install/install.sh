@@ -169,6 +169,46 @@ PY
     chmod 0755 "$DOWNLOADER"
 fi
 
+# ---------- 5. Patch libfs.sh::fs_size to accept cozyportal:// URLs --------
+# When an Image is created with PATH=cozyportal://..., fs_mad/stat calls
+# fs_size to probe the remote image header. Upstream fs_size only routes
+# through downloader.sh for local files or http(s) URLs — so we extend the
+# scheme whitelist to recognise cozyportal:// too.
+
+LIBFS="$DS_DIR/libfs.sh"
+LIBFS_MARKER='# cozyportal-fs-size-scheme'
+
+if grep -q "$LIBFS_MARKER" "$LIBFS"; then
+    log "libfs.sh already patched for cozyportal://"
+else
+    log "patching $LIBFS::fs_size to recognise cozyportal:// URLs"
+    cp -a "$LIBFS" "$LIBFS.cozyportal.bak.$(date +%s)"
+
+    python3 - "$LIBFS" "$LIBFS_MARKER" <<'PY'
+import sys
+path, marker = sys.argv[1], sys.argv[2]
+src = open(path).read()
+# NOTE: we keep the marker inside a /* */-style bash comment so it does not
+# separate the conditional from the trailing `; then`.
+old = "(echo \"${SRC}\" | grep -qe '^https\\?://')"
+new = "(echo \"${SRC}\" | grep -qe '^\\(https\\?\\|cozyportal\\)://')"
+if src.count(old) != 1:
+    sys.stderr.write(f"could not uniquely locate fs_size http check; occurrences={src.count(old)}\n")
+    sys.exit(1)
+src = src.replace(old, new, 1)
+# Leave a trail so we can detect the patch next time.
+src = src.replace(
+    "function fs_size {",
+    f"function fs_size {{ {marker}",
+    1,
+)
+open(path, 'w').write(src)
+PY
+
+    chown "$ONEADMIN":"$ONEADMIN" "$LIBFS"
+    chmod 0644 "$LIBFS"
+fi
+
 log "driver installed. Restart opennebula to pick up oned.conf changes:"
 log "  systemctl restart opennebula opennebula-scheduler"
 log ""
