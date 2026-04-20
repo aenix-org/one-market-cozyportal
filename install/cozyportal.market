@@ -1,0 +1,3 @@
+NAME       = "cozyportal"
+MARKET_MAD = "cozyportal"
+DESCRIPTION = "Cozyportal marketplace backed by the Files API"

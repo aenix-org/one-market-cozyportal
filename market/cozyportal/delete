@@ -1,0 +1,120 @@
+#!/bin/bash
+
+# -------------------------------------------------------------------------- #
+# OpenNebula Marketplace Driver - cozyportal                                 #
+#                                                                            #
+# Copyright 2026, Aenix (aenix.io).                                          #
+#                                                                            #
+# Licensed under the Apache License, Version 2.0 (the "License"); you may    #
+# not use this file except in compliance with the License. You may obtain    #
+# a copy of the License at                                                   #
+#                                                                            #
+# http://www.apache.org/licenses/LICENSE-2.0                                 #
+# -------------------------------------------------------------------------- #
+
+###############################################################################
+# Delete a file from the Cozyportal Files API.
+#
+# The marketplace SOURCE URL produced by import looks like
+#   cozyportal://<namespace>/<file-uuid>
+# This script parses that URL and issues DELETE on the corresponding File.
+#
+# File deletion here refers only to the marketplace-side copy. Cozyportal's
+# File controller will remove the S3 object as part of its own finalizer.
+###############################################################################
+
+# -------- Set up the environment to source common tools & conf ------------
+
+if [ -z "${ONE_LOCATION}" ]; then
+    LIB_LOCATION=/usr/lib/one
+else
+    LIB_LOCATION=$ONE_LOCATION/lib
+fi
+
+. "$LIB_LOCATION/sh/scripts_common.sh"
+
+DRIVER_PATH=$(dirname "$0")
+
+# shellcheck source=/dev/null
+source "${DRIVER_PATH}/../../etc/market/cozyportal/cozyportal.conf"
+# shellcheck source=/dev/null
+source "${DRIVER_PATH}/cozyportal.lib.sh"
+
+UTILS_PATH="${DRIVER_PATH}/../../datastore"
+
+# -------- Get arguments from OpenNebula core ------------
+
+DRV_ACTION=$1
+ID=$2
+
+XPATH="$UTILS_PATH/xpath.rb -b $DRV_ACTION"
+
+unset i XPATH_ELEMENTS
+
+while IFS= read -r -d '' element; do
+    XPATH_ELEMENTS[i++]="$element"
+done < <($XPATH \
+    /MARKET_DRIVER_ACTION_DATA/MARKETPLACEAPP/SOURCE)
+
+unset i
+
+APP_SOURCE="${XPATH_ELEMENTS[i++]}"
+
+if [ -z "$APP_SOURCE" ]; then
+    # Nothing to delete; SOURCE is empty for apps that never finished import.
+    exit 0
+fi
+
+# -------- Parse cozyportal://<namespace>/<file-uuid> ---------------------
+
+if [[ "$APP_SOURCE" != cozyportal://* ]]; then
+    error_message "Unexpected SOURCE scheme for cozyportal driver: $APP_SOURCE"
+    exit 1
+fi
+
+rest="${APP_SOURCE#cozyportal://}"
+NAMESPACE="${rest%%/*}"
+FILE_ID="${rest#*/}"
+
+if [ -z "$NAMESPACE" ] || [ -z "$FILE_ID" ] || [ "$NAMESPACE" = "$FILE_ID" ]; then
+    error_message "Malformed SOURCE URL: $APP_SOURCE"
+    exit 1
+fi
+
+# -------- Issue DELETE against the Files API ------------------------------
+
+DELETE_URL="$(cp_files_api_url "$NAMESPACE" "$FILE_ID")"
+
+log_info "Deleting $DELETE_URL"
+
+CURL_ARGS=(
+    --show-error
+    --silent
+    --connect-timeout "${COZYPORTAL_CONNECT_TIMEOUT:-30}"
+    --max-time "${COZYPORTAL_REQUEST_TIMEOUT:-120}"
+    --request DELETE
+    --header "Authorization: Bearer $(cp_token)"
+    --output /dev/null
+    --write-out '%{http_code}'
+)
+
+if [ "${COZYPORTAL_INSECURE:-no}" = "yes" ]; then
+    CURL_ARGS+=(--insecure)
+fi
+
+if [ -n "${COZYPORTAL_CACERT:-}" ]; then
+    CURL_ARGS+=(--cacert "$COZYPORTAL_CACERT")
+fi
+
+HTTP_CODE=$(curl "${CURL_ARGS[@]}" "$DELETE_URL" 2>&1) || true
+
+case "$HTTP_CODE" in
+    2??|404)
+        # 404 is fine — File is already gone.
+        exit 0
+        ;;
+    *)
+        error_message "Delete on Files API failed (HTTP $HTTP_CODE)"
+        exit 1
+        ;;
+esac

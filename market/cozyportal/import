@@ -1,0 +1,142 @@
+#!/bin/bash
+
+# -------------------------------------------------------------------------- #
+# OpenNebula Marketplace Driver - cozyportal                                 #
+#                                                                            #
+# Copyright 2026, Aenix (aenix.io).                                          #
+#                                                                            #
+# Licensed under the Apache License, Version 2.0 (the "License"); you may    #
+# not use this file except in compliance with the License. You may obtain    #
+# a copy of the License at                                                   #
+#                                                                            #
+# http://www.apache.org/licenses/LICENSE-2.0                                 #
+# -------------------------------------------------------------------------- #
+
+###############################################################################
+# Upload a local image file to the Cozyportal Files API.
+#
+# Invoked by OpenNebula core after ds_mad/export has produced a local file
+# (IMPORT_SOURCE). Uploads that file to a pre-created File resource in the
+# target Cozyportal namespace, then returns the SOURCE URL that OpenNebula
+# will store on the MarketPlaceApp and pass to downloader.sh during export.
+#
+# Required attributes on the MarketPlaceApp template:
+#   NAMESPACE  - Kubernetes namespace of the target File resource
+#   FILE_ID    - UUID name of the target File resource
+#
+# The File must exist in status=Pending before this script runs. The
+# Cozyportal console-controller is responsible for pre-creating it.
+###############################################################################
+
+# -------- Set up the environment to source common tools & conf ------------
+
+if [ -z "${ONE_LOCATION}" ]; then
+    LIB_LOCATION=/usr/lib/one
+else
+    LIB_LOCATION=$ONE_LOCATION/lib
+fi
+
+. "$LIB_LOCATION/sh/scripts_common.sh"
+
+DRIVER_PATH=$(dirname "$0")
+
+# shellcheck source=/dev/null
+source "${DRIVER_PATH}/../../etc/market/cozyportal/cozyportal.conf"
+# shellcheck source=/dev/null
+source "${DRIVER_PATH}/cozyportal.lib.sh"
+
+UTILS_PATH="${DRIVER_PATH}/../../datastore"
+
+# -------- Get arguments from OpenNebula core ------------
+
+DRV_ACTION=$1
+ID=$2
+
+XPATH="$UTILS_PATH/xpath.rb -b $DRV_ACTION"
+
+unset i XPATH_ELEMENTS
+
+while IFS= read -r -d '' element; do
+    XPATH_ELEMENTS[i++]="$element"
+done < <($XPATH \
+    /MARKET_DRIVER_ACTION_DATA/IMPORT_SOURCE \
+    /MARKET_DRIVER_ACTION_DATA/FORMAT \
+    /MARKET_DRIVER_ACTION_DATA/DISPOSE \
+    /MARKET_DRIVER_ACTION_DATA/DISPOSE_CMD \
+    /MARKET_DRIVER_ACTION_DATA/SIZE \
+    /MARKET_DRIVER_ACTION_DATA/MD5 \
+    /MARKET_DRIVER_ACTION_DATA/MARKETPLACEAPP/NAME \
+    /MARKET_DRIVER_ACTION_DATA/MARKETPLACEAPP/TEMPLATE/NAMESPACE \
+    /MARKET_DRIVER_ACTION_DATA/MARKETPLACEAPP/TEMPLATE/FILE_ID)
+
+unset i
+
+IMPORT_SOURCE="${XPATH_ELEMENTS[i++]}"
+FORMAT="${XPATH_ELEMENTS[i++]}"
+DISPOSE="${XPATH_ELEMENTS[i++]}"
+DISPOSE_CMD="${XPATH_ELEMENTS[i++]}"
+SIZE="${XPATH_ELEMENTS[i++]}"
+MD5="${XPATH_ELEMENTS[i++]}"
+APP_NAME="${XPATH_ELEMENTS[i++]}"
+APP_NAMESPACE="${XPATH_ELEMENTS[i++]}"
+APP_FILE_ID="${XPATH_ELEMENTS[i++]}"
+
+if [ -z "$APP_NAMESPACE" ] || [ -z "$APP_FILE_ID" ]; then
+    error_message "NAMESPACE and FILE_ID must be set on the MarketPlaceApp template"
+    exit 1
+fi
+
+if [ ! -r "$IMPORT_SOURCE" ]; then
+    error_message "Cannot read import source: $IMPORT_SOURCE"
+    exit 1
+fi
+
+# -------- Upload the file through the Files API ---------------------------
+
+UPLOAD_URL="$(cp_files_api_url "$APP_NAMESPACE" "$APP_FILE_ID")/upload"
+
+log_info "Uploading $IMPORT_SOURCE to $UPLOAD_URL"
+
+# We stream the file using --upload-file; Files API accepts application/octet-stream
+# on the /upload subresource. Errors from the API land in stderr and the driver log.
+CURL_ARGS=(
+    --fail
+    --show-error
+    --silent
+    --connect-timeout "${COZYPORTAL_CONNECT_TIMEOUT:-30}"
+    --max-time "${COZYPORTAL_UPLOAD_TIMEOUT:-7200}"
+    --request POST
+    --header "Authorization: Bearer $(cp_token)"
+    --header "Content-Type: application/octet-stream"
+    --upload-file "$IMPORT_SOURCE"
+)
+
+if [ "${COZYPORTAL_INSECURE:-no}" = "yes" ]; then
+    CURL_ARGS+=(--insecure)
+fi
+
+if [ -n "${COZYPORTAL_CACERT:-}" ]; then
+    CURL_ARGS+=(--cacert "$COZYPORTAL_CACERT")
+fi
+
+if ! HTTP_OUT=$(curl "${CURL_ARGS[@]}" "$UPLOAD_URL" 2>&1); then
+    error_message "Upload to Files API failed: $HTTP_OUT"
+    exit 1
+fi
+
+# -------- Clean up local file if requested --------------------------------
+
+if [ "$DISPOSE" = "YES" ] && [ -n "$DISPOSE_CMD" ]; then
+    $DISPOSE_CMD
+fi
+
+# -------- Return metadata for the MarketPlaceApp --------------------------
+# SOURCE is consumed by downloader.sh (via cozyportal:// scheme handler) when
+# OpenNebula later exports the app back into a datastore.
+
+cat <<EOF
+SOURCE="cozyportal://${APP_NAMESPACE}/${APP_FILE_ID}"
+MD5="$MD5"
+SIZE="$SIZE"
+FORMAT="$FORMAT"
+EOF
