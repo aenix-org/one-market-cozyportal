@@ -20,8 +20,8 @@ Use cases:
   │ onemarketapp create ──► ds_mad│        │                            │
   │                         export│        │                            │
   │                           │   │        │                            │
-  │                           ▼   │  HTTPS │   /apis/files.portal.      │
-  │ market/cozyportal/import ─────┼───────►│   cozystack.io/.../upload  │
+  │                           ▼   │  HTTPS │ /apis/files.<supergroup>/  │
+  │ market/cozyportal/import ─────┼───────►│   .../upload               │
   │                               │        │                            │
   │ SOURCE=cozyportal://ns/fileid │        │                            │
   └───────────────┬───────────────┘        └────────────────────────────┘
@@ -54,8 +54,8 @@ attribute tells the driver which namespace to target on upload, and the
 `cozyportal://<namespace>/<file-uuid>` SOURCE URL carries the namespace on
 download.
 
-The ClusterRole in `install/k8s/serviceaccount.yaml` is scoped to the
-`files.portal.cozystack.io` API group only — the driver cannot reach any
+The ClusterRole in `install/k8s/serviceaccount.yaml.tmpl` is scoped to the
+`files.<apiSupergroup>` API group only — the driver cannot reach any
 other resource in the cluster.
 
 ## Repository layout
@@ -76,7 +76,7 @@ etc/market/cozyportal/
 install/
   install.sh                — idempotent installer (run as root on ONE FE)
   cozyportal.market         — template for onemarket create
-  k8s/serviceaccount.yaml   — SA, ClusterRole, token secret
+  k8s/serviceaccount.yaml.tmpl — SA, ClusterRole, token secret
 ```
 
 ## Installation
@@ -87,7 +87,10 @@ frontend.
 ### 1. Kubernetes-side (run on any machine with `kubectl`)
 
 ```bash
-kubectl apply -f install/k8s/serviceaccount.yaml
+# API_SUPERGROUP must match the backend's `apiSupergroup` Helm value
+# (default platform.aenix.io; legacy deployments: portal.cozystack.io).
+API_SUPERGROUP=platform.aenix.io \
+  envsubst '$API_SUPERGROUP' < install/k8s/serviceaccount.yaml.tmpl | kubectl apply -f -
 
 # Extract the long-lived token and the Kubernetes CA:
 kubectl -n cozy-files get secret one-marketplace-token \
@@ -142,7 +145,7 @@ Cozyportal console workflow needed for the smoke test.
    NS=project-<project-uuid>
 
    cat <<EOF | kubectl apply -f -
-   apiVersion: files.portal.cozystack.io/v1alpha1
+   apiVersion: files.platform.aenix.io/v1alpha1   # files.<apiSupergroup>
    kind: File
    metadata:
      name: $FILE_UUID
@@ -217,3 +220,7 @@ sudo systemctl start opennebula
 ## License
 
 Apache-2.0.
+
+## Upgrading an existing deployment
+
+The API group is now `files.<supergroup>`, defaulting to `platform.aenix.io`. The installer never overwrites an existing `cozyportal.conf`, so a frontend whose backend still serves `files.portal.cozystack.io` must add `COZYPORTAL_API_SUPERGROUP="portal.cozystack.io"` to that file before re-running `install.sh`, and render the RBAC template with `API_SUPERGROUP=portal.cozystack.io`.
