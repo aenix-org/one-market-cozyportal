@@ -5,10 +5,12 @@
 # Required environment (set via /etc/one/market/cozyportal/cozyportal.conf):
 #   COZYPORTAL_API            e.g. https://kubernetes.default.svc
 #   COZYPORTAL_TOKEN_FILE     path to a file holding the SA bearer token
-#   COZYPORTAL_GROUP          defaults to files.portal.cozystack.io
+#   COZYPORTAL_API_SUPERGROUP defaults to platform.aenix.io
+#   COZYPORTAL_GROUP          defaults to files.$COZYPORTAL_API_SUPERGROUP
 #   COZYPORTAL_VERSION        defaults to v1alpha1
 
-: "${COZYPORTAL_GROUP:=files.portal.cozystack.io}"
+: "${COZYPORTAL_API_SUPERGROUP:=platform.aenix.io}"
+: "${COZYPORTAL_GROUP:=files.${COZYPORTAL_API_SUPERGROUP}}"
 : "${COZYPORTAL_VERSION:=v1alpha1}"
 
 cp_token() {
