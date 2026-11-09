@@ -216,4 +216,6 @@ sudo systemctl start opennebula
 
 ## License
 
-Apache-2.0.
+Copyright (c) 2025-present AENIX INC and its affiliates.
+
+This software is licensed under the AENIX Enterprise Edition (EE) License. Production use requires a valid subscription agreement with AENIX; see [LICENSE](LICENSE) for the full terms.

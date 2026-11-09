@@ -3,13 +3,11 @@
 # -------------------------------------------------------------------------- #
 # OpenNebula Marketplace Driver - cozyportal                                 #
 #                                                                            #
-# Copyright 2026, Aenix (aenix.io).                                          #
+# Copyright (c) 2025-present AENIX INC and its affiliates.                   #
 #                                                                            #
-# Licensed under the Apache License, Version 2.0 (the "License"); you may    #
-# not use this file except in compliance with the License. You may obtain    #
-# a copy of the License at                                                   #
-#                                                                            #
-# http://www.apache.org/licenses/LICENSE-2.0                                 #
+# Licensed under the AENIX Enterprise Edition (EE) License; you may not use  #
+# this file except in compliance with the EE License. The full license text  #
+# is in the LICENSE file at the root of this repository.                     #
 # -------------------------------------------------------------------------- #
 
 ###############################################################################
